@@ -1,0 +1,460 @@
+function sendEmails() {
+  
+  var adminEmail = 'xxx';
+  
+  var sheet = SpreadsheetApp.getActiveSpreadsheet();
+  var activitySheet = sheet.getSheetByName('Form Responses 1');
+
+  var last = activitySheet.getMaxRows();
+  var newDataRange = activitySheet.getRange("A2:"+last);
+ 
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var emailSheet = ss.getSheetByName('Reviewers'); // ss.getSheets()[1]; -- updated to get by name 2nd tab is the Reviewer Tab
+
+  var emailDataRange = emailSheet.getRange("A2:"+last);
+  var emailReviewers = Array();
+
+  var emailData = emailDataRange.getValues();
+  for (i in emailData) {
+    var row = emailData[i];
+    var reviewerName = row[0];
+    var reviewnerEmail = row[1];
+    if (reviewerName.length > 0) {
+      emailReviewers[reviewerName] = reviewnerEmail;
+    } else {
+      break;
+    }
+  }
+  
+  // Fetch values for each row in the Range.
+
+  // New entries are ones that have "yesterday's sub date"
+  // This is a good as we are going to get without going to the
+  // time-level analysis.  It is also a consistent way to address
+  // the incoming entries.
+  //
+  var newEntries = Array();
+  
+  var loopCount = 0;
+  
+  var data = newDataRange.getValues();
+  for (i in data) {
+    loopCount = loopCount + 1;
+
+    // Used so that we don't have to hard-code the numbers, but we need to ensure all columns are enumerated here.
+    var f = 0;
+    
+    var row = data[i];
+    var trackingID = row[f++];
+    var cellIndexTrackingID = f;
+    var submitDate = row[f++];
+    var submitterName = row[f++];
+    var submitterEmail = row[f++];
+    var submitterPhone = row[f++];
+    var subResubmissionTrackingID = row[f++];
+    var subLink = row[f++];
+    var subLinkSupplemental = row[f++];
+    var subDocType = row[f++];
+    var cellIndexDocType = f;
+    var subDocumentTitle = row[f++];
+    var subProgramOffice = row[f++];
+    var subRegion = row[f++];
+    var subPreparer = row[f++];
+    var subAdditionalInformation = row[f++]; // M
+    var subBEOTargetDate = row[f++]; // N
+    var cellIndexBEOTargetDate = f;
+    var subInitReviewer = row[f++]; // O
+    var subInitReviewDate = row[f++]; // P. Date Assigned to Reviewer
+    var cellIndexInitReviewerDate = f;
+    var subFollowup = row[f++]; // Q. Follow up
+    var subReviewedLink = row[f++]; // R. Reviewed Document Link
+    var subBEONotificationDate = row[f++]; // S. Review Completion Date
+    var cellIndexBEONotificationDate = f;
+    var subClearanceDate = row[f++]; // T. Clearance Date
+    var subECDLink = row[f++]; // U. ECD Link
+    var cellIndexECDLink = f;
+
+    var message = "";
+    var subject = "Sending emails from a Spreadsheet";
+    var currentDate = new Date();
+    var subHasInitReviewer = 0;
+    
+    // If we don't have a valid submission date, we are at the end of the list and we can stop
+    // processing rows.
+    //
+    if (!(submitDate instanceof Date)) {
+      break;
+    }    
+    
+    // Set flags for if a reviewer has been specified.
+    if (subInitReviewer.length > 0) {
+      subHasInitReviewer = 1;
+    }
+
+    // Lookup reviewer email from the Reviewers Tab.
+    //
+    var InitReviewerEmail = emailReviewers[subInitReviewer];
+    // If reviewer wasn't found, send this to me for debugging.
+    //
+    if (!InitReviewerEmail) { InitReviewerEmail   = adminEmail; }
+
+    // =============================================
+    // CASE 1: Target Delivery Date
+    // =============================================
+    //   
+    // If there is no Target Delivery Date to BEO, we set it and notify GH Support that there
+    // is a new submission.
+    //
+    // We are adding the assignment of a Tracking ID at this stage to improve responsiveness
+    // and to help when researching requests for status. -- 03/15/2017
+    //
+    var isNew = 0;
+
+    if (!trackingID) {
+      Logger.log('No Tracking ID at row: ' + i);
+      Logger.log('Preparer: ' + subPreparer);
+
+      // Get the next tracking number
+      //
+      var trackingCell = emailSheet.getRange("H1");
+      var nextTrackingID = trackingCell.getValue();
+      Logger.log('Tracking ID: ' + trackingCell.getValue());
+      trackingCell.setValue(nextTrackingID + 1);
+
+      var iCellIndex = parseInt(i, 10);
+      Logger.log('iCellIndex: ' + iCellIndex);
+      var updateCell = newDataRange.getCell(iCellIndex+1, cellIndexTrackingID);
+      trackingID = nextTrackingID;
+      updateCell.setValue(nextTrackingID);
+    }
+    
+    if (!(subBEOTargetDate instanceof Date)) {
+
+      // Set subBEONotificationDate to today.
+      //
+      var futureDeliveryDate = new Date(submitDate);
+      futureDeliveryDate.setDate(submitDate.getDate()+21);
+
+      // Write this date into the correct cell.  How?
+      //
+      var iCellIndex = parseInt(i, 10);
+      var updateCell = newDataRange.getCell(iCellIndex+1, cellIndexBEOTargetDate);
+      Logger.log(iCellIndex + ' --- iCellIndex cell15 >> ' + updateCell.getValue());
+      updateCell.setValue(futureDeliveryDate);
+      subBEOTargetDate = futureDeliveryDate;      
+      
+      // Write this date into the correct cell: cellIndexBEONotificationDate
+      //
+      var iCellIndex = parseInt(i, 10);
+      var updateCell = newDataRange.getCell(iCellIndex+1, cellIndexBEONotificationDate);
+      Logger.log(iCellIndex + ' --- iCellIndex ' + cellIndexBEONotificationDate + ' >> ' + updateCell.getValue());
+      updateCell.setValue(subBEONotificationDate);
+      
+      subject = "GH Support: New Review Receipt #" + trackingID + " Received";
+      var emailType = 1; // Recieved
+      message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+      MailApp.sendEmail(adminEmail, subject, message, { htmlBody: message });
+      
+      // Send the submitter a receipt of their submission. This has the tracking ID assigned to it.
+      //
+      subject = "GH Support: New Review Receipt #" + trackingID + " Receipt";
+      var emailType = 1; // Recieved
+      message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+      MailApp.sendEmail(submitterEmail, subject, message, { htmlBody: message });
+
+      isNew = 1;
+    }
+
+    // =============================================
+    // CASE 2: Reviewer Selected
+    // =============================================
+    //    
+    // If there is a reviewer assigned and there is no reviewer assignement date, then
+    // set the assignment date and notify the selected reviewer that they have been 
+    // assigned a document to review.
+    //    
+    if (!isNew) {
+      if ((subInitReviewer.length > 0) && (!(subInitReviewDate instanceof Date))) {
+        subInitReviewDate = new Date();
+  
+        // Write this date into the correct cell: cellIndexBEONotificationDate
+        //
+        var iCellIndex = parseInt(i, 10);
+        var updateCell = newDataRange.getCell(iCellIndex+1, cellIndexInitReviewerDate);
+        Logger.log(iCellIndex + ' --- iCellIndex ' + cellIndexInitReviewerDate + ' >> ' + updateCell.getValue());
+        updateCell.setValue(subInitReviewDate);
+
+        var emailType = 2; // Assignment
+        var reviewerEmailLookup = emailReviewers[subInitReviewer];
+
+        subject = "GH Support: Document Review Assignment #" + trackingID + " Assigned";
+        message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+        MailApp.sendEmail(adminEmail, subject, message, { htmlBody: message });
+        
+        // Send the reviewer notification that they have a new document review assigned to them.
+        //
+        subject = "GH Support: Document Review Assignment #" + trackingID + " Assignment";
+        message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+        MailApp.sendEmail(reviewerEmailLookup, subject, message, { htmlBody: message });
+      }
+    }
+    
+    // =============================================
+    // CASE 3: Reviewed Document Link Available
+    // =============================================
+    //    
+    // If there is a Reviewed Document Link but there is not a BEO Notifification of Review Date
+    // then we set the date to TODAY and then send an email to GH Support letting them know that
+    // something was completed.
+    //
+    if ((subReviewedLink.length > 0) && (!(subBEONotificationDate instanceof Date))) {
+      // Set subBEONotificationDate to today.
+      //
+      subBEONotificationDate = new Date();
+
+      // Write this date into the correct cell: cellIndexBEONotificationDate
+      //
+      var iCellIndex = parseInt(i, 10);
+      var updateCell = newDataRange.getCell(iCellIndex+1, cellIndexBEONotificationDate);
+      Logger.log(iCellIndex + ' --- iCellIndex ' + cellIndexBEONotificationDate + ' >> ' + updateCell.getValue());
+      updateCell.setValue(subBEONotificationDate);
+      
+      var emailType = 3; // Completion
+      subject = "GH Support: BEO Notification of Review Completion #" + trackingID;
+      message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+      MailApp.sendEmail(adminEmail, subject, message, { htmlBody: message });
+
+      subject = "GH Support: Notification of Review Completion #" + trackingID;
+      message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+      MailApp.sendEmail(submitterEmail, subject, message, { htmlBody: message });
+
+      subject = "GH Support: Notification of Review Completion #" + trackingID;
+      message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+      MailApp.sendEmail(reviewerEmailLookup, subject, message, { htmlBody: message });
+    }
+    
+    // =============================================
+    // CASE 4: Send ECD Link Notifications
+    // =============================================
+    //    
+    // Check to see if there is an ECD link and if the cell is GREEN.
+    // Special case if the value is set to "N/A" -- Set cell to Yellow and Ignore.
+    //
+    var iCellIndex = parseInt(i, 10);
+    var cellECDLink = newDataRange.getCell(iCellIndex+1, cellIndexECDLink);
+    var cellECDColor = cellECDLink.getBackground();
+    // Logger.log(iCellIndex + ' --- cellIndexECDLink ' + cellIndexECDLink + ' >> ' + cellECDLink.getValue()+ ' >> ' + cellECDColor);
+    if (cellECDColor == '#ffffff') {
+      if ((subECDLink != '') && (subECDLink != 'N/A')) {
+        cellECDLink.setBackgroundColor('#ddffdd'); // Change to a "green"
+
+        var emailType = 4; // ECD Posting
+        subject = "GH Support: Notification of ECD Posting #" + trackingID;
+        message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+        MailApp.sendEmail(submitterEmail, subject, message, { htmlBody: message });
+
+        subject = "GH Support: Notification of ECD Posting #" + trackingID;
+        message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+        MailApp.sendEmail(adminEmail, subject, message, { htmlBody: message });
+      } else {
+        if (subECDLink == 'N/A') {
+          cellECDLink.setBackgroundColor('#ffff00'); // Change to a "yellow"
+        }
+      }
+    }
+    
+    // =============================================
+    // CASE 5: EMMR Reminders for EMMPs after 30 days
+    // =============================================
+    //    
+    // Check to see if subDocType is "EMMP" and not Yellow (#fff2cc, processed).
+    //
+    if (subDocType == 'EMMP') {
+      
+      // If this cell is green, we can skip it.
+      //
+      var iCellIndex = parseInt(i, 10);
+      var cellEMMPDocType = newDataRange.getCell(iCellIndex+1, cellIndexDocType);
+      var cellEMMPColor = cellEMMPDocType.getBackground();
+
+      // If the cell is white (new), yellow (< 30) or grey (not cleared), OK. If it's green we can skip it.
+      if (((cellEMMPColor == '#ffffff') || (cellEMMPColor == '#fff2cc') || (cellEMMPColor == '#f3f3f3')) && (cellEMMPColor != '#d9ead3')) {
+        if (subClearanceDate instanceof Date) {
+
+          // Calculate what day was 30 days ago.
+          //
+          var todayDate = new Date();
+          var dateDifference = DateDiff.inDays(subClearanceDate, todayDate);
+
+          if (dateDifference >= 30) {
+
+            if (dateDifference > 100) {
+              // Skipping older entries, color this cell a darker yellow.
+              //
+              cellEMMPDocType.setBackgroundColor('#f9cb9c'); // Change to a "darker yellow"
+            } else {
+              var reviewerEmailLookup = emailReviewers[subInitReviewer];
+
+              emailType = 5; // 5 is EMMP reminder
+              subject = "Reminder Email – EMMP and EMMR Requirements (#" + trackingID + ")";
+              message = summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink);
+              message = message + "<br />";
+              message = message + '[This message was sent ' + dateDifference + " days after approval, message intended for: " + reviewerEmailLookup + " ]<br />";
+              MailApp.sendEmail(submitterEmail, subject, message, { htmlBody: message });
+              MailApp.sendEmail(adminEmail, subject, message, { htmlBody: message });
+            
+              // Reminder sent, color this cell Green.
+              //
+              cellEMMPDocType.setBackgroundColor('#d9ead3'); // Change to a "green" 
+            }
+          } else {
+            // Has a clearance date but is hasn't been 30 days yet!
+            //
+            cellEMMPDocType.setBackgroundColor('#fff2cc'); // Change to a "yellow". 
+          }
+        } else {
+          // If the clearance date is "N/A" we change the color also.
+          //
+          if (subClearanceDate == '') {
+            cellEMMPDocType.setBackgroundColor('#f3f3f3'); // Change to a "gray" if there was no clearance date yet.
+          }  
+          if (subClearanceDate == 'N/A') {
+            cellEMMPDocType.setBackgroundColor('#f9cb9c'); // Change to a "darker yellow" for N/A.
+          }  
+        }
+      }
+    }    
+  }
+}
+
+function summaryMessage(trackingID, emailType, submitDate, subLink, subDocType, submitterName, submitterEmail, subAdditionalInformation, subHasInitReviewer, subInitReviewer, subDocumentTitle, subProgramOffice, subRegion, subPreparer, subBEONotificationDate, subReviewedLink, subECDLink) {
+  var m = '';
+
+  if (emailType == 5) { // EMMR Reminder
+    m = m + "<p>Thank you again for submitting the [<b>" + subDocumentTitle + " #" + trackingID + "</b>] Environmental Mitigation and Monitoring ";
+    m = m + 'Plan (EMMP) through the <a href="https://sites.google.com/a/usaid.gov/ghsupport/file">GH Environmental Compliance Document Submission Portal</a>. Now that the EMMP has been ';
+    m = m + "completed and cleared, this is a courtesy email to remind you to ensure that affected Implementing Partners (IPs) are aware ";
+    m = m + "of their requirement to prepare and submit to the AOR/COR for review an annual Environmental Mitigation and Monitoring Report (EMMR). ";
+    m = m + "EMMRs are typically due within 30-90 days after the end of the fiscal year, but please review the governing Initial ";
+    m = m + "Environmental Examination (IEE) document for your project to find the exact submission date.</p>";
+    
+    m = m + '<p>GH has several resources available through the <a href="https://sites.google.com/a/usaid.gov/ghguidance/home">GH Environmental Management Portal</a> to assist GH staff and IPs in navigating the environmental compliance monitoring and reporting process:</p>';
+
+    m = m + "<ul>";
+    m = m + '<li><a href="https://sites.google.com/a/usaid.gov/ghguidance/home">GH EMMR Factsheet</a> - Describes the EMMR process and how to prepare an effective EMMR<br /><br /></li>';
+    m = m + '<li><a href="https://sites.google.com/a/usaid.gov/ghguidance/home">Monitoring & Oversight</a> - Provides an overview of GH environmental mitigation, monitoring, and reporting requirements<br /><br /></li>';
+    m = m + '<li><a href="https://sites.google.com/a/usaid.gov/ghguidance/home">GH Environmental Management: Mitigation and Monitoring Course</a> - A 2-hour online course focused on the EMMP and EMMR process</li>';
+    m = m + "</ul>";
+
+    m = m + '<p>No reply to this email is required. However, if you have questions on the EMMR process or accessing the <a href="https://sites.google.com/a/usaid.gov/ghguidance/home">GH Environmental Management Portal</a>, please contact GH Support at ' + adminEmail + '.</p>';
+
+    m = m + "<p>Thank-you!<br />GH Support</p>";
+    
+    return m;
+  }
+
+  m = m + "<p style=\"color: #000;\">";
+  m = m + '<b>Tracking ID #</b> ' + trackingID + "</br>\n";      
+  m = m + subDocType + " submitted by " + submitterName + " ( " + submitterEmail + " ).\n";
+  m = m + "</p>\n";
+
+  if (emailType == 1) { // New Entry
+    m = m + '<p>Thank you for submitting your document for review.  Your entry was also automatically logged into the Activity Tracker on the Portal.</p>';
+  }
+  if (emailType == 2) { // Assignment
+    m = m + '<p>The following document has been assigned for review:</p>';
+  }
+  
+  if (emailType == 4) { // Assignment
+    m = m + "The following document has been posted to the ECD:<br />";
+    m = m + "<p style=\"color: #000;\">";
+    m = m + "<b>Document Title:</b> " + subDocumentTitle + "<br />\n";
+    m = m + "<b>Program Office:</b> " + subProgramOffice + " / " + subRegion + "<br />\n";
+    m = m + "<b>Preparer:</b> " + subPreparer + "<br /><br />\n";
+    m = m + "<b>Link:</b> " + subECDLink;
+    m = m + "<br /><br />";
+    m = m + "You can visit the ECD here: https://ecd.usaid.gov.";
+    m = m + "<br /><br />";
+  } else {
+    
+    // Add needed by information if was provided.
+    //
+    if (subAdditionalInformation) {
+      m = m + '<p><b>Submitter provided additional information:</b><br />' + "\n";
+      m = m + subAdditionalInformation + "</p>\n";      
+    }
+    
+    m = m + "<p style=\"color: #000;\">";
+    m = m + "<b>Initial Reviewer:</b> ";
+        if (subHasInitReviewer) { m = m + subInitReviewer; }
+        else { m = m + "<span style\"color: #700;\">NOT ASSIGNED</span>"; }
+    m = m + "</p>\n";
+  
+    if (subBEONotificationDate instanceof Date) {
+      var subBEONotificationDateString = Utilities.formatDate(subBEONotificationDate, "EST", "yyyy-MM-dd")
+      m = m + "<p style=\"color: #070;\">";
+      m = m + "<b>The review of this submission was completed on:</b> " + subBEONotificationDateString;
+      m = m + "</p>\n";
+      m = m + '<p><b>Link to reveiwed document:</b><br />' + subReviewedLink + ".</p>\n";
+      m = m + "<p><b>It was originally submitted on:</b> " + Utilities.formatDate(submitDate, "EST", "yyyy-MM-dd");
+      var daysToReview = DateDiff.inDays(submitDate, subBEONotificationDate);
+      m = m + ' - ' + daysToReview + ' day(s) to review.';
+      m = m + "</p>\n";
+    }
+  
+    m = m + "<p style=\"color: #000;\">";
+    m = m + "<b>Document Title:</b>" + subDocumentTitle + "<br />\n";
+    m = m + "<b>Program Office:</b> " + subProgramOffice + " / " + subRegion + "<br />\n";
+    m = m + "<b>Preparer:</b> " + subPreparer + "<br /><br />\n";
+    m = m + "<b>Link to submitted document:</b><br />" + subLink + "\n";
+    m = m + "</p>\n";
+  
+    if (emailType == 2) { // Assignment
+      m = m + "<p><b>Instructions:</b><br />";
+      m = m + "1. Start your review as soon as possible or immediately notify notify GH Support at " + adminEmail + " if you are unable to conduct the review (e.g., if on TDY or annual leave)";
+      m = m + "<br /><br />";
+      m = m + "2. If you need additional information before you can begin your review (e.g., the corresponding IEE for a submitted EMMP):";
+      m = m + "<br /><br />";
+      m = m + "  a. First attempt to locate the information on your own (e.g., search on the ECD, https://ecd.usaid.gov).<br />";
+      m = m + "  b. Then, if necessary, use the Request for Information Form:<br />";
+      m = m + "https://docs.google.com/forms/d/e/1FAIpQLSf4oDKZhXWIzVASL889p5a7RToV_3fvsLa22ICRTIzA8QvuCg/viewform?entry.857043316=" + trackingID;
+      m = m + " to request additional information from the Submitter.";
+      m = m + "  c. Once the Submitter responds to the Request for Information, you will receive a notification email with a link to download the additional documentation, if any. Once the Submitter responds to the Request for Information, you will receive a notification email with a link to download the additional documentation, if any.<br />";
+      m = m + "  d. Please try to consolidate your requests for information to minimize email traffic to/from the Document Submitter(s) and to minimize potential confusion.<br />";
+      m = m + "<br /><br />";
+      m = m + "3. When you have finished your review, complete the Reviewed Document Submission Form:<br />";
+      m = m + "https://docs.google.com/forms/d/e/1FAIpQLSeZvAesrt-eYokVSgWVviWVPRo_IeVD-l3Bp01nG_i0qJHp-Q/viewform?entry.1550807192=" + trackingID;
+      m = m + "<br /><br />";
+      m = m + "</p>";
+    }
+  }
+  
+  return m;
+}
+
+
+var DateDiff = {    
+    inDays: function(d1, d2) {
+        var t2 = d2.getTime();
+        var t1 = d1.getTime();
+
+        return parseInt((t2-t1)/(24*3600*1000));
+    },
+    inWeeks: function(d1, d2) {
+        var t2 = d2.getTime();
+        var t1 = d1.getTime();
+
+        return parseInt((t2-t1)/(24*3600*1000*7));
+    },
+    inMonths: function(d1, d2) {
+        var d1Y = d1.getFullYear();
+        var d2Y = d2.getFullYear();
+        var d1M = d1.getMonth();
+        var d2M = d2.getMonth();
+
+        return (d2M+12*d2Y)-(d1M+12*d1Y);
+    },
+    inYears: function(d1, d2) {
+        return d2.getFullYear()-d1.getFullYear();
+    }
+}
